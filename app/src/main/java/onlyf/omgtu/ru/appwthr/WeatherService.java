@@ -13,6 +13,7 @@ import android.util.Log;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import onlyf.omgtu.ru.appwthr.RequestParameters;
 import onlyf.omgtu.ru.appwthr.WeatherCallback;
@@ -26,12 +27,12 @@ public class WeatherService extends Service implements WeatherCallback {
     RequestParameters requestParameters;
     SharedPreferences sharedPreferences;
     private final String LOG_TAG = "WeatherService";
-    ExecutorService es;
     NotificationManager nm;
+    Thread tr;
+    boolean alive = true;
 
     public void onCreate(){
         super.onCreate();
-        es = Executors.newFixedThreadPool(1);
         nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
     }
 
@@ -44,30 +45,48 @@ public class WeatherService extends Service implements WeatherCallback {
     public int onStartCommand(Intent intent, int flags, int startId) {
         Log.d(LOG_TAG, "Service Started, id is - " + startId);
 
-        MyRun mr = new MyRun(startId);
-        es.execute(mr);
-
         weatherUtils = new WeatherUtils(this, this);
         sharedPreferences = getSharedPreferences("prefs", MODE_PRIVATE);
 
-        RequestParameters requestParameters = new RequestParameters(this, sharedPreferences.getString("city", "Omsk"), sharedPreferences.getInt("units", 0));
+        final RequestParameters requestParameters = new RequestParameters(this, sharedPreferences.getString("city", "Omsk"), sharedPreferences.getInt("units", 0));
+        this.requestParameters = requestParameters;
+        final DataBaseHelper dataBaseHelper = new DataBaseHelper(getApplicationContext());
+        tr = new Thread() {
 
-        weatherUtils.makeRequest(requestParameters);
+            @Override
+            public void run() {
+                while(true){
+                    if(getAlive()) {
+                        weatherUtils.makeRequest(requestParameters);
+                        wr = dataBaseHelper.getRecord(requestParameters);
 
-        DataBaseHelper dataBaseHelper = new DataBaseHelper(getApplicationContext());
-        wr = dataBaseHelper.getRecord(requestParameters);
-        
-        NotificationCompat.Builder builder =
-                new NotificationCompat.Builder(this)
-                        .setSmallIcon(R.mipmap.ic_launcher)
-                        .setContentTitle("Weather is updated!")
-                        .setContentText("It`s " + wr.getTemp() + " in " + wr.getName());
+                        NotificationCompat.Builder builder =
+                                new NotificationCompat.Builder(getApplicationContext())
+                                        .setSmallIcon(R.mipmap.ic_launcher)
+                                        .setContentTitle("Weather is updated!")
+                                        .setContentText("It`s " + wr.getTemp() + " in " + wr.getName());
 
-        Notification notification = builder.build();
+                        Notification notification = builder.build();
 
-        NotificationManager notificationManager =
-                (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        notificationManager.notify(1, notification);
+                        NotificationManager notificationManager =
+                                (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+                        notificationManager.notify(1, notification);
+
+                        try {
+                            TimeUnit.SECONDS.sleep(5);
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                    else{
+                        return;
+                    }
+
+                }
+            }
+        };
+
+        tr.start();
 
         return super.onStartCommand(intent, flags, startId);
     }
@@ -80,7 +99,16 @@ public class WeatherService extends Service implements WeatherCallback {
 
     @Override
     public void onDestroy() {
+        setAlive(false);
         Log.i(LOG_TAG, "Service Destroyed");
         super.onDestroy();
+    }
+
+    public boolean getAlive() {
+        return alive;
+    }
+
+    public void setAlive(boolean alive) {
+        this.alive = alive;
     }
 }
